@@ -3,6 +3,8 @@
 
   const canvas = document.getElementById("canvas");
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const strokeCanvas = document.createElement("canvas");
+  const strokeCtx = strokeCanvas.getContext("2d");
   const stage = document.getElementById("canvasStage");
   const colorInput = document.getElementById("color");
   const colorHex = document.getElementById("colorHex");
@@ -23,6 +25,10 @@
   const canvasHint = document.getElementById("canvasHint");
   const canvasStatus = document.getElementById("canvasStatus");
   const canvasSize = document.getElementById("canvasSize");
+  const zoomInBtn = document.getElementById("zoomInBtn");
+  const zoomOutBtn = document.getElementById("zoomOutBtn");
+  const zoomResetBtn = document.getElementById("zoomResetBtn");
+  const zoomValue = document.getElementById("zoomValue");
   const documentStatus = document.getElementById("documentStatus");
   const toolButtons = [...document.querySelectorAll("[data-tool]")];
   const swatches = [...document.querySelectorAll("[data-color]")];
@@ -33,6 +39,12 @@
   let strokeMoved = false;
   let activePointerId = null;
   let lastPoint = null;
+  let zoom = 1;
+  let panX = 0;
+  let panY = 0;
+  let pinchState = null;
+  const activeTouches = new Map();
+  const ignoredTouchIds = new Set();
   let undoStack = [];
   let redoStack = [];
   let hasArtwork = false;
@@ -84,6 +96,8 @@
 
     canvas.width = Math.round(width * dpr);
     canvas.height = Math.round(height * dpr);
+    strokeCanvas.width = canvas.width;
+    strokeCanvas.height = canvas.height;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = "source-over";
@@ -183,17 +197,151 @@
 
   function getPoint(event) {
     const rect = canvas.getBoundingClientRect();
-    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    return {
+      x: (event.clientX - rect.left) / zoom,
+      y: (event.clientY - rect.top) / zoom,
+    };
+  }
+
+  function getStagePoint(clientX, clientY) {
+    const rect = stage.getBoundingClientRect();
+    return {
+      x: clientX - rect.left - stage.clientLeft,
+      y: clientY - rect.top - stage.clientTop,
+    };
+  }
+
+  function clampZoom(value) {
+    return Math.min(5, Math.max(0.25, value));
+  }
+
+  function renderZoom() {
+    canvas.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+    zoomValue.textContent = `${Math.round(zoom * 100)}%`;
+    zoomOutBtn.disabled = zoom <= 0.25;
+    zoomInBtn.disabled = zoom >= 5;
+    zoomResetBtn.disabled = Math.abs(zoom - 1) < 0.001 && Math.abs(panX) < 0.5 && Math.abs(panY) < 0.5;
+  }
+
+  function setZoomAt(nextZoom, clientX, clientY) {
+    const point = getStagePoint(clientX, clientY);
+    const worldX = (point.x - panX) / zoom;
+    const worldY = (point.y - panY) / zoom;
+    zoom = clampZoom(nextZoom);
+    panX = point.x - worldX * zoom;
+    panY = point.y - worldY * zoom;
+    renderZoom();
+  }
+
+  function resetZoom() {
+    zoom = 1;
+    panX = 0;
+    panY = 0;
+    renderZoom();
+  }
+
+  function distanceBetween(a, b) {
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+
+  function midpoint(a, b) {
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  }
+
+  function cancelUncommittedStroke() {
+    if (!drawing) return;
+    drawing = false;
+    strokeMoved = false;
+    activePointerId = null;
+    lastPoint = null;
+    strokeCtx.clearRect(0, 0, strokeCanvas.width, strokeCanvas.height);
+    // The stroke is still on the temporary layer, so the actual artwork is untouched.
+    if (undoStack.length) undoStack.pop();
+    updateHistoryButtons();
+  }
+
+  function startPinch() {
+    const points = [...activeTouches.values()];
+    if (points.length < 2) return;
+    const center = midpoint(points[0], points[1]);
+    const stagePoint = getStagePoint(center.x, center.y);
+    pinchState = {
+      startDistance: Math.max(1, distanceBetween(points[0], points[1])),
+      startZoom: zoom,
+      worldX: (stagePoint.x - panX) / zoom,
+      worldY: (stagePoint.y - panY) / zoom,
+    };
+  }
+
+  function movePinch() {
+    if (!pinchState || activeTouches.size < 2) return;
+    const points = [...activeTouches.values()];
+    const center = midpoint(points[0], points[1]);
+    const stagePoint = getStagePoint(center.x, center.y);
+    zoom = clampZoom(pinchState.startZoom * distanceBetween(points[0], points[1]) / pinchState.startDistance);
+    panX = stagePoint.x - pinchState.worldX * zoom;
+    panY = stagePoint.y - pinchState.worldY * zoom;
+    renderZoom();
+  }
+
+  function handlePointerDown(event) {
+    if (event.pointerType === "touch") {
+      activeTouches.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      try { canvas.setPointerCapture(event.pointerId); } catch (_) { /* Pointer capture may be unavailable. */ }
+      if (activeTouches.size >= 2) {
+        event.preventDefault();
+        cancelUncommittedStroke();
+        startPinch();
+        return;
+      }
+      beginStroke(event);
+      return;
+    }
+    beginStroke(event);
+  }
+
+  function handlePointerMove(event) {
+    if (event.pointerType === "touch" && activeTouches.has(event.pointerId)) {
+      activeTouches.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (activeTouches.size >= 2) {
+        event.preventDefault();
+        movePinch();
+        return;
+      }
+      if (ignoredTouchIds.has(event.pointerId)) return;
+    }
+    moveStroke(event);
+  }
+
+  function handlePointerUp(event) {
+    if (event.pointerType === "touch" && activeTouches.has(event.pointerId)) {
+      activeTouches.delete(event.pointerId);
+      if (pinchState) {
+        if (activeTouches.size < 2) {
+          pinchState = null;
+          activeTouches.forEach((_, id) => ignoredTouchIds.add(id));
+        }
+        return;
+      }
+      ignoredTouchIds.delete(event.pointerId);
+    }
+    endStroke(event);
   }
 
   function setStrokeStyle() {
     ctx.lineWidth = Number(lineWInput.value);
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-    ctx.globalAlpha = Number(opacityInput.value) / 100;
-    ctx.globalCompositeOperation = "source-over";
-    ctx.strokeStyle = tool === "eraser" ? "#ffffff" : colorInput.value;
-    ctx.fillStyle = ctx.strokeStyle;
+    // Draw each complete stroke onto a temporary opaque layer, then apply opacity once.
+    // This prevents overlapping round brush segments from building darker blobs.
+    strokeCtx.setTransform(lastDpr, 0, 0, lastDpr, 0, 0);
+    strokeCtx.globalAlpha = 1;
+    strokeCtx.globalCompositeOperation = "source-over";
+    strokeCtx.lineWidth = Number(lineWInput.value);
+    strokeCtx.lineCap = "round";
+    strokeCtx.lineJoin = "round";
+    strokeCtx.strokeStyle = tool === "eraser" ? "#ffffff" : colorInput.value;
+    strokeCtx.fillStyle = strokeCtx.strokeStyle;
   }
 
   function pickColor(point) {
@@ -222,8 +370,9 @@
     lastPoint = point;
     pushHistory();
     setStrokeStyle();
-    ctx.beginPath();
-    ctx.moveTo(point.x, point.y);
+    strokeCtx.clearRect(0, 0, strokeCanvas.width, strokeCanvas.height);
+    strokeCtx.beginPath();
+    strokeCtx.moveTo(point.x, point.y);
     try { canvas.setPointerCapture(event.pointerId); } catch (_) { /* Pointer capture may be unavailable. */ }
   }
 
@@ -234,10 +383,10 @@
     if (!lastPoint) lastPoint = point;
     setStrokeStyle();
     // Render only the newest segment so reduced opacity doesn't darken old segments repeatedly.
-    ctx.beginPath();
-    ctx.moveTo(lastPoint.x, lastPoint.y);
-    ctx.lineTo(point.x, point.y);
-    ctx.stroke();
+    strokeCtx.beginPath();
+    strokeCtx.moveTo(lastPoint.x, lastPoint.y);
+    strokeCtx.lineTo(point.x, point.y);
+    strokeCtx.stroke();
     lastPoint = point;
     strokeMoved = true;
     hasArtwork = true;
@@ -248,9 +397,17 @@
     if (!drawing || (event && event.pointerId !== undefined && event.pointerId !== activePointerId)) return;
     if (!strokeMoved && lastPoint) {
       setStrokeStyle();
-      ctx.beginPath();
-      ctx.arc(lastPoint.x, lastPoint.y, Math.max(0.5, Number(lineWInput.value) / 2), 0, Math.PI * 2);
-      ctx.fill();
+      strokeCtx.beginPath();
+      strokeCtx.arc(lastPoint.x, lastPoint.y, Math.max(0.5, Number(lineWInput.value) / 2), 0, Math.PI * 2);
+      strokeCtx.fill();
+    }
+    if (lastPoint) {
+      ctx.save();
+      ctx.globalAlpha = Number(opacityInput.value) / 100;
+      ctx.globalCompositeOperation = "source-over";
+      ctx.drawImage(strokeCanvas, 0, 0, strokeCanvas.width, strokeCanvas.height, 0, 0, canvas.width / lastDpr, canvas.height / lastDpr);
+      ctx.restore();
+      strokeCtx.clearRect(0, 0, strokeCanvas.width, strokeCanvas.height);
     }
     drawing = false;
     activePointerId = null;
@@ -329,11 +486,25 @@
     opacityValue.textContent = opacityInput.value;
     setRangeProgress(opacityInput);
   });
-  canvas.addEventListener("pointerdown", beginStroke);
-  canvas.addEventListener("pointermove", moveStroke);
-  canvas.addEventListener("pointerup", endStroke);
-  canvas.addEventListener("pointercancel", endStroke);
-  canvas.addEventListener("lostpointercapture", endStroke);
+  canvas.addEventListener("pointerdown", handlePointerDown);
+  canvas.addEventListener("pointermove", handlePointerMove);
+  canvas.addEventListener("pointerup", handlePointerUp);
+  canvas.addEventListener("pointercancel", handlePointerUp);
+  canvas.addEventListener("lostpointercapture", handlePointerUp);
+  stage.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    const factor = Math.exp(-event.deltaY * 0.0015);
+    setZoomAt(zoom * factor, event.clientX, event.clientY);
+  }, { passive: false });
+  zoomInBtn.addEventListener("click", () => {
+    const rect = stage.getBoundingClientRect();
+    setZoomAt(zoom * 1.2, rect.left + rect.width / 2, rect.top + rect.height / 2);
+  });
+  zoomOutBtn.addEventListener("click", () => {
+    const rect = stage.getBoundingClientRect();
+    setZoomAt(zoom / 1.2, rect.left + rect.width / 2, rect.top + rect.height / 2);
+  });
+  zoomResetBtn.addEventListener("click", resetZoom);
   undoBtn.addEventListener("click", undo);
   redoBtn.addEventListener("click", redo);
   fillBtn.addEventListener("click", fillCanvas);
@@ -387,6 +558,7 @@
   setRangeProgress(opacityInput);
   updateHistoryButtons();
   updateStatus();
+  renderZoom();
   setTool("brush");
 
   if ("ResizeObserver" in window) {

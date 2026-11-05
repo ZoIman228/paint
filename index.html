@@ -104,6 +104,12 @@
         <div class="canvas-stage" id="canvasStage">
           <canvas id="canvas" aria-label="Полотно для малювання. Використовуй мишку, стилус або палець." tabindex="0"></canvas>
           <div class="canvas-hint" id="canvasHint" aria-hidden="true"><span class="hint-sparkle">✦</span><strong>Тут починається магія</strong><span>Зроби перший штрих на полотні</span></div>
+          <div class="zoom-controls" aria-label="Масштаб полотна">
+            <button class="zoom-button" id="zoomOutBtn" type="button" aria-label="Зменшити полотно" title="Зменшити">−</button>
+            <span class="zoom-value" id="zoomValue" aria-live="polite">100%</span>
+            <button class="zoom-button" id="zoomInBtn" type="button" aria-label="Збільшити полотно" title="Збільшити">+</button>
+            <button class="zoom-reset" id="zoomResetBtn" type="button" aria-label="Скинути масштаб" title="Скинути масштаб">Скинути</button>
+          </div>
         </div>
         <div class="canvas-footer"><span><span class="shortcut-key">Ctrl</span> + <span class="shortcut-key">Z</span> — скасувати</span><span><span class="shortcut-key">Ctrl</span> + <span class="shortcut-key">S</span> — зберегти роботу</span><span>Зроблено з <span class="heart">♥</span> і пікселів</span></div>
       </section>
