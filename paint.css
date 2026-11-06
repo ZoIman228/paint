@@ -110,8 +110,14 @@ kbd { min-width: 22px; padding: 3px 5px; border: 1px solid #343848; border-radiu
 .canvas-meta { display: flex; align-items: center; gap: 9px; color: #8d93a7; font-size: 10px; white-space: nowrap; }
 .canvas-dot { width: 6px; height: 6px; }
 .meta-divider { width: 1px; height: 14px; background: #333747; margin: 0 2px; }
-.canvas-stage { position: relative; min-height: 0; overflow: hidden; border: 1px solid #383b4b; border-radius: 12px; background: #ffffff; box-shadow: 0 12px 45px #0000002e, 0 2px 7px #00000015; }
-#canvas { display: block; width: 100%; height: 100%; background: #fff; cursor: crosshair; touch-action: none; outline: none; transform-origin: 0 0; will-change: transform; }
+.canvas-stage { position: relative; min-height: 0; overflow: hidden; border: 1px solid #383b4b; border-radius: 12px; background-color: #e5e7ef; background-image: linear-gradient(45deg, #d9dce7 25%, transparent 25%, transparent 75%, #d9dce7 75%), linear-gradient(45deg, #d9dce7 25%, transparent 25%, transparent 75%, #d9dce7 75%); background-position: 0 0, 12px 12px; background-size: 24px 24px; box-shadow: 0 12px 45px #0000002e, 0 2px 7px #00000015; }
+#canvas { display: block; width: 100%; height: 100%; background: #fff; cursor: crosshair; touch-action: none; outline: 1px solid #c9ccd8; box-shadow: 0 4px 18px #18203320; transform-origin: 0 0; will-change: transform; }
+.stroke-preview { position: absolute; inset: 0; z-index: 1; display: block; width: 100%; height: 100%; pointer-events: none; opacity: 0; transform-origin: 0 0; will-change: transform; }
+.canvas-stage.is-pan-ready { cursor: grab; }
+.canvas-stage.is-panning { cursor: grabbing !important; }
+.canvas-stage.is-pan-ready #canvas { cursor: grab; }
+.canvas-stage.is-panning #canvas { cursor: grabbing; }
+.canvas-stage .zoom-controls { cursor: default; }
 #canvas.tool-eraser { cursor: cell; }
 #canvas.tool-eyedropper { cursor: copy; }
 .canvas-hint { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: #a8acb9; pointer-events: none; transition: opacity .2s; }

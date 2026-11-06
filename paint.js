@@ -5,7 +5,10 @@
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   const strokeCanvas = document.createElement("canvas");
   const strokeCtx = strokeCanvas.getContext("2d");
+  strokeCanvas.className = "stroke-preview";
+  strokeCanvas.setAttribute("aria-hidden", "true");
   const stage = document.getElementById("canvasStage");
+  stage.appendChild(strokeCanvas);
   const colorInput = document.getElementById("color");
   const colorHex = document.getElementById("colorHex");
   const colorName = document.getElementById("colorName");
@@ -26,7 +29,6 @@
   const canvasStatus = document.getElementById("canvasStatus");
   const canvasSize = document.getElementById("canvasSize");
   const zoomInBtn = document.getElementById("zoomInBtn");
-  const zoomOutBtn = document.getElementById("zoomOutBtn");
   const zoomResetBtn = document.getElementById("zoomResetBtn");
   const zoomValue = document.getElementById("zoomValue");
   const documentStatus = document.getElementById("documentStatus");
@@ -43,6 +45,10 @@
   let panX = 0;
   let panY = 0;
   let pinchState = null;
+  let spacePressed = false;
+  let panning = false;
+  let panPointerId = null;
+  let panStart = null;
   const activeTouches = new Map();
   const ignoredTouchIds = new Set();
   let undoStack = [];
@@ -80,9 +86,9 @@
   }
 
   function updateCanvasDimensions() {
-    const rect = stage.getBoundingClientRect();
-    const width = Math.max(1, Math.floor(rect.width));
-    const height = Math.max(1, Math.floor(rect.height));
+    // clientWidth/clientHeight exclude the stage border and match the canvas CSS box.
+    const width = Math.max(1, Math.floor(stage.clientWidth));
+    const height = Math.max(1, Math.floor(stage.clientHeight));
     const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 3));
     if (width === lastCanvasWidth && height === lastCanvasHeight && dpr === lastDpr) return;
 
@@ -98,6 +104,8 @@
     canvas.height = Math.round(height * dpr);
     strokeCanvas.width = canvas.width;
     strokeCanvas.height = canvas.height;
+    strokeCanvas.style.width = `${width}px`;
+    strokeCanvas.style.height = `${height}px`;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = "source-over";
@@ -196,10 +204,13 @@
   }
 
   function getPoint(event) {
-    const rect = canvas.getBoundingClientRect();
+    // Convert screen coordinates back into the unscaled canvas coordinate space.
+    // Using the stage avoids rounding/offset errors from getBoundingClientRect()
+    // on a transformed canvas, especially after repeated zoom and pan operations.
+    const point = getStagePoint(event.clientX, event.clientY);
     return {
-      x: (event.clientX - rect.left) / zoom,
-      y: (event.clientY - rect.top) / zoom,
+      x: (point.x - panX) / zoom,
+      y: (point.y - panY) / zoom,
     };
   }
 
@@ -212,13 +223,14 @@
   }
 
   function clampZoom(value) {
-    return Math.min(5, Math.max(0.25, value));
+    return Math.min(5, Math.max(1, value));
   }
 
   function renderZoom() {
-    canvas.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+    const transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+    canvas.style.transform = transform;
+    strokeCanvas.style.transform = transform;
     zoomValue.textContent = `${Math.round(zoom * 100)}%`;
-    zoomOutBtn.disabled = zoom <= 0.25;
     zoomInBtn.disabled = zoom >= 5;
     zoomResetBtn.disabled = Math.abs(zoom - 1) < 0.001 && Math.abs(panX) < 0.5 && Math.abs(panY) < 0.5;
   }
@@ -255,6 +267,7 @@
     activePointerId = null;
     lastPoint = null;
     strokeCtx.clearRect(0, 0, strokeCanvas.width, strokeCanvas.height);
+    strokeCanvas.style.opacity = "0";
     // The stroke is still on the temporary layer, so the actual artwork is untouched.
     if (undoStack.length) undoStack.pop();
     updateHistoryButtons();
@@ -284,23 +297,65 @@
     renderZoom();
   }
 
+  function beginPan(event) {
+    event.preventDefault();
+    panning = true;
+    panPointerId = event.pointerId;
+    panStart = {
+      clientX: event.clientX,
+      clientY: event.clientY,
+      panX,
+      panY,
+    };
+    stage.classList.add("is-panning");
+    try { stage.setPointerCapture(event.pointerId); } catch (_) { /* Pointer capture may be unavailable. */ }
+  }
+
+  function movePan(event) {
+    if (!panning || event.pointerId !== panPointerId || !panStart) return false;
+    event.preventDefault();
+    panX = panStart.panX + event.clientX - panStart.clientX;
+    panY = panStart.panY + event.clientY - panStart.clientY;
+    renderZoom();
+    return true;
+  }
+
+  function endPan(event) {
+    if (!panning || (event && event.pointerId !== undefined && event.pointerId !== panPointerId)) return;
+    panning = false;
+    panPointerId = null;
+    panStart = null;
+    stage.classList.remove("is-panning");
+  }
+
   function handlePointerDown(event) {
+    // Ignore clicks on the floating zoom controls.
+    if (event.target.closest(".zoom-controls")) return;
+
     if (event.pointerType === "touch") {
       activeTouches.set(event.pointerId, { x: event.clientX, y: event.clientY });
-      try { canvas.setPointerCapture(event.pointerId); } catch (_) { /* Pointer capture may be unavailable. */ }
+      try { stage.setPointerCapture(event.pointerId); } catch (_) { /* Pointer capture may be unavailable. */ }
       if (activeTouches.size >= 2) {
         event.preventDefault();
         cancelUncommittedStroke();
         startPinch();
         return;
       }
-      beginStroke(event);
+      if (event.target === canvas) beginStroke(event);
       return;
     }
-    beginStroke(event);
+
+    // Space + drag, middle mouse, or right mouse moves the sheet without painting.
+    if (event.button === 1 || event.button === 2 || (spacePressed && event.button === 0)) {
+      beginPan(event);
+      return;
+    }
+    if (event.target === canvas) beginStroke(event);
   }
 
   function handlePointerMove(event) {
+    if (movePan(event)) return;
+
     if (event.pointerType === "touch" && activeTouches.has(event.pointerId)) {
       activeTouches.set(event.pointerId, { x: event.clientX, y: event.clientY });
       if (activeTouches.size >= 2) {
@@ -314,6 +369,11 @@
   }
 
   function handlePointerUp(event) {
+    if (panning && event.pointerId === panPointerId) {
+      endPan(event);
+      return;
+    }
+
     if (event.pointerType === "touch" && activeTouches.has(event.pointerId)) {
       activeTouches.delete(event.pointerId);
       if (pinchState) {
@@ -342,6 +402,7 @@
     strokeCtx.lineJoin = "round";
     strokeCtx.strokeStyle = tool === "eraser" ? "#ffffff" : colorInput.value;
     strokeCtx.fillStyle = strokeCtx.strokeStyle;
+    strokeCanvas.style.opacity = String(Number(opacityInput.value) / 100);
   }
 
   function pickColor(point) {
@@ -408,6 +469,7 @@
       ctx.drawImage(strokeCanvas, 0, 0, strokeCanvas.width, strokeCanvas.height, 0, 0, canvas.width / lastDpr, canvas.height / lastDpr);
       ctx.restore();
       strokeCtx.clearRect(0, 0, strokeCanvas.width, strokeCanvas.height);
+      strokeCanvas.style.opacity = "0";
     }
     drawing = false;
     activePointerId = null;
@@ -486,11 +548,14 @@
     opacityValue.textContent = opacityInput.value;
     setRangeProgress(opacityInput);
   });
-  canvas.addEventListener("pointerdown", handlePointerDown);
-  canvas.addEventListener("pointermove", handlePointerMove);
-  canvas.addEventListener("pointerup", handlePointerUp);
-  canvas.addEventListener("pointercancel", handlePointerUp);
-  canvas.addEventListener("lostpointercapture", handlePointerUp);
+  // Listen on the stage so the sheet can also be moved while zoomed in,
+  // including when the pointer is over the empty area around the sheet.
+  stage.addEventListener("pointerdown", handlePointerDown);
+  stage.addEventListener("pointermove", handlePointerMove);
+  stage.addEventListener("pointerup", handlePointerUp);
+  stage.addEventListener("pointercancel", handlePointerUp);
+  stage.addEventListener("lostpointercapture", handlePointerUp);
+  stage.addEventListener("contextmenu", (event) => event.preventDefault());
   stage.addEventListener("wheel", (event) => {
     event.preventDefault();
     const factor = Math.exp(-event.deltaY * 0.0015);
@@ -499,10 +564,6 @@
   zoomInBtn.addEventListener("click", () => {
     const rect = stage.getBoundingClientRect();
     setZoomAt(zoom * 1.2, rect.left + rect.width / 2, rect.top + rect.height / 2);
-  });
-  zoomOutBtn.addEventListener("click", () => {
-    const rect = stage.getBoundingClientRect();
-    setZoomAt(zoom / 1.2, rect.left + rect.width / 2, rect.top + rect.height / 2);
   });
   zoomResetBtn.addEventListener("click", resetZoom);
   undoBtn.addEventListener("click", undo);
@@ -525,6 +586,12 @@
   document.addEventListener("keydown", (event) => {
     const target = event.target;
     const editing = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement;
+    if (event.code === "Space" && !editing) {
+      spacePressed = true;
+      stage.classList.add("is-pan-ready");
+      event.preventDefault();
+      return;
+    }
     const key = event.key.toLowerCase();
     if ((event.ctrlKey || event.metaKey) && key === "z") {
       event.preventDefault();
@@ -551,6 +618,18 @@
     }
   });
 
+  document.addEventListener("keyup", (event) => {
+    if (event.code === "Space") {
+      spacePressed = false;
+      stage.classList.remove("is-pan-ready");
+    }
+  });
+  window.addEventListener("blur", () => {
+    spacePressed = false;
+    stage.classList.remove("is-pan-ready", "is-panning");
+    if (panning) endPan();
+  });
+
   // Initialise a sharp canvas and keep artwork when the workspace changes size.
   updateCanvasDimensions();
   updateColorUI();
@@ -558,6 +637,7 @@
   setRangeProgress(opacityInput);
   updateHistoryButtons();
   updateStatus();
+  strokeCanvas.style.opacity = "0";
   renderZoom();
   setTool("brush");
 

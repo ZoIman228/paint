@@ -79,8 +79,8 @@
         </section>
 
         <section class="panel-section settings-section">
-          <div class="section-heading"><label for="lineW">Розмір пензля</label><span class="value-chip"><span id="lineWeightValue">10</span> px</span></div>
-          <input id="lineW" class="range-input" type="range" min="1" max="80" step="1" value="10" aria-label="Розмір пензля">
+          <div class="section-heading"><label for="lineW">Розмір пензля</label><span class="value-chip"><span id="lineWeightValue">5</span> px</span></div>
+          <input id="lineW" class="range-input" type="range" min="1" max="40" step="1" value="5" aria-label="Розмір пензля">
           <div class="range-labels"><span>Тонкий</span><span>Товстий</span></div>
         </section>
 
@@ -105,7 +105,6 @@
           <canvas id="canvas" aria-label="Полотно для малювання. Використовуй мишку, стилус або палець." tabindex="0"></canvas>
           <div class="canvas-hint" id="canvasHint" aria-hidden="true"><span class="hint-sparkle">✦</span><strong>Тут починається магія</strong><span>Зроби перший штрих на полотні</span></div>
           <div class="zoom-controls" aria-label="Масштаб полотна">
-            <button class="zoom-button" id="zoomOutBtn" type="button" aria-label="Зменшити полотно" title="Зменшити">−</button>
             <span class="zoom-value" id="zoomValue" aria-live="polite">100%</span>
             <button class="zoom-button" id="zoomInBtn" type="button" aria-label="Збільшити полотно" title="Збільшити">+</button>
             <button class="zoom-reset" id="zoomResetBtn" type="button" aria-label="Скинути масштаб" title="Скинути масштаб">Скинути</button>
